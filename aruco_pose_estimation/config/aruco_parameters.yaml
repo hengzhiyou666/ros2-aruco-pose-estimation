@@ -1,15 +1,35 @@
 /aruco_node:
     ros__parameters:
-        # Aruco detection parameters
-        marker_size: 0.2 # Size of the markers in meters
-        aruco_dictionary_id: DICT_4X4_50 # Aruco dictionary type
-        # Input topics
-        image_topic: /camera/color/image_raw # Input image topic
-        use_depth_input: false # Use depth image for 3D pose estimation
-        depth_image_topic: /camera/aligned_depth_to_color/image_raw # Input depth image topic
-        camera_info_topic: /camera/color/camera_info # Input camera info topic with camera intrinsic parameters
-        camera_frame: camera_color_optical_frame # Camera link frame of reference
-        # Output topics
-        detected_markers_topic: /aruco/markers # Output topic with detected markers (aruco poses + ids)
-        markers_visualization_topic: /aruco/poses # Output topic with visualization of detected markers as pose array
-        output_image_topic: /aruco/image # Output topic with visualization of detected markers drawn on image
+        # ==================== 1. ArUco 二维码检测 ====================
+        marker_size: 0.2 # 二维码实际边长，单位：米
+        aruco_dictionary_id: DICT_4X4_50 # 二维码使用的 ArUco 字典类型
+
+        # ==================== 2. 图像输入接口 ====================
+        image_topic: /image_left_raw/nv12_half # dog3 的 1280x720 NV12 图像话题
+        use_depth_input: false # 是否使用深度图参与三维位姿计算
+        depth_image_topic: /camera/aligned_depth_to_color/image_raw # 深度图输入话题，仅在开启深度图时使用
+
+        # ==================== 3. 摄像头内参来源 ====================
+        # 可选模式：auto、topic 或 file
+        # auto：优先等待内参话题，超时后读取本地文件
+        # topic：只允许读取内参话题，不读取本地文件
+        # file：启动后直接读取本地文件，不等待内参话题
+        camera_calibration_mode: auto # 当前使用的内参来源模式
+        camera_info_topic: /stereo_left/camera_info # 摄像头内参话题
+        camera_info_timeout_sec: 5.0 # auto 模式等待内参话题的超时时间，单位：秒
+        camera_calibration_file: /app_param/vita_calib.yaml # 本地摄像头标定文件路径
+        camera_calibration_label: stereo_left # 从本地标定文件中选择的摄像头名称
+        camera_frame: stereo_left # 位姿消息使用的摄像头坐标系名称
+
+        # ==================== 4. 图像处理参数 ====================
+        resize_width: 1920 # 二维码检测和位姿计算使用的图像宽度
+        resize_height: 1080 # 二维码检测和位姿计算使用的图像高度
+
+        # ==================== 5. 启动选项 ====================
+        launch_camera_driver: false # dog3 已经发布摄像头话题，因此不重复启动驱动
+        launch_rviz: false # 是否同时启动 RViz 可视化界面
+
+        # ==================== 6. 输出话题 ====================
+        detected_markers_topic: /output/aruco/markers # 主输出：二维码 ID 及其对应位姿
+        markers_visualization_topic: /aruco/poses # PoseArray 位姿可视化输出
+        output_image_topic: /aruco/image # 带二维码边框和坐标轴的图像输出

@@ -6,7 +6,6 @@
 # Python imports
 import numpy as np
 import cv2
-import tf_transformations
 
 # ROS2 imports
 from rclpy.impl import rcutils_logger
@@ -24,7 +23,7 @@ def pose_estimation(rgb_frame: np.array, depth_frame: np.array, aruco_detector: 
                     matrix_coefficients: np.array, distortion_coefficients: np.array,
                     pose_array: PoseArray, markers: ArucoMarkers) -> list[np.array, PoseArray, ArucoMarkers]:
     '''
-    rgb_frame - Frame from the RGB camera stream
+    rgb_frame - Grayscale or RGB frame used for marker detection
     depth_frame - Depth frame from the depth camera stream
     matrix_coefficients - Intrinsic matrix of the calibrated camera
     distortion_coefficients - Distortion coefficients associated with your camera
@@ -44,7 +43,12 @@ def pose_estimation(rgb_frame: np.array, depth_frame: np.array, aruco_detector: 
     # new code version
     corners, marker_ids, rejected = aruco_detector.detectMarkers(image=rgb_frame)
 
-    frame_processed = rgb_frame
+    # Keep detection on the NV12 Y plane, while publishing a normal RGB
+    # visualization that can contain colored marker outlines and axes.
+    if rgb_frame.ndim == 2:
+        frame_processed = cv2.cvtColor(rgb_frame, cv2.COLOR_GRAY2RGB)
+    else:
+        frame_processed = rgb_frame.copy()
     logger = rcutils_logger.RcutilsLogger(name="aruco_node")
 
     # If markers are detected
@@ -53,6 +57,9 @@ def pose_estimation(rgb_frame: np.array, depth_frame: np.array, aruco_detector: 
         logger.debug("Detected {} markers.".format(len(corners)))
 
         for i, marker_id in enumerate(marker_ids):
+            # OpenCV 4 commonly returns shape (N, 1), while OpenCV 5 may
+            # return shape (N,). Normalize both forms to a Python integer.
+            marker_id_value = int(np.asarray(marker_id).reshape(-1)[0])
             # Estimate pose of each marker and return the values rvec and tvec
 
             # using deprecated function
@@ -108,7 +115,7 @@ def pose_estimation(rgb_frame: np.array, depth_frame: np.array, aruco_detector: 
             # add the pose and marker id to the pose_array and markers messages
             pose_array.poses.append(pose)
             markers.poses.append(pose)
-            markers.marker_ids.append(marker_id[0])
+            markers.marker_ids.append(marker_id_value)
 
     return frame_processed, pose_array, markers
 
@@ -135,16 +142,90 @@ def my_estimatePoseSingleMarkers(corners, marker_size, camera_matrix, distortion
     rvec = rvec.reshape(3, 1)
     tvec = tvec.reshape(3, 1)
        
-    rot, jacobian = cv2.Rodrigues(rvec)
-    rot_matrix = np.eye(4, dtype=np.float32)
-    rot_matrix[0:3, 0:3] = rot
-
-    # convert rotation matrix to quaternion
-    quaternion = tf_transformations.quaternion_from_matrix(rot_matrix)
-    norm_quat = np.linalg.norm(quaternion)
-    quaternion = quaternion / norm_quat
+    rotation_matrix, jacobian = cv2.Rodrigues(rvec)
+    quaternion = rotation_matrix_to_quaternion(rotation_matrix)
 
     return tvec, rvec, quaternion
+
+
+def rotation_matrix_to_quaternion(rotation_matrix: np.ndarray) -> np.ndarray:
+    """Convert a 3x3 rotation matrix to a normalized [x, y, z, w] quaternion."""
+
+    rotation_matrix = np.asarray(rotation_matrix, dtype=np.float64).reshape(3, 3)
+    quaternion = np.empty(4, dtype=np.float64)
+    trace = np.trace(rotation_matrix)
+
+    if trace > 0.0:
+        scale = np.sqrt(trace + 1.0) * 2.0
+        quaternion[3] = 0.25 * scale
+        quaternion[0] = (
+            rotation_matrix[2, 1] - rotation_matrix[1, 2]
+        ) / scale
+        quaternion[1] = (
+            rotation_matrix[0, 2] - rotation_matrix[2, 0]
+        ) / scale
+        quaternion[2] = (
+            rotation_matrix[1, 0] - rotation_matrix[0, 1]
+        ) / scale
+    elif (
+        rotation_matrix[0, 0] > rotation_matrix[1, 1]
+        and rotation_matrix[0, 0] > rotation_matrix[2, 2]
+    ):
+        scale = np.sqrt(
+            1.0
+            + rotation_matrix[0, 0]
+            - rotation_matrix[1, 1]
+            - rotation_matrix[2, 2]
+        ) * 2.0
+        quaternion[3] = (
+            rotation_matrix[2, 1] - rotation_matrix[1, 2]
+        ) / scale
+        quaternion[0] = 0.25 * scale
+        quaternion[1] = (
+            rotation_matrix[0, 1] + rotation_matrix[1, 0]
+        ) / scale
+        quaternion[2] = (
+            rotation_matrix[0, 2] + rotation_matrix[2, 0]
+        ) / scale
+    elif rotation_matrix[1, 1] > rotation_matrix[2, 2]:
+        scale = np.sqrt(
+            1.0
+            + rotation_matrix[1, 1]
+            - rotation_matrix[0, 0]
+            - rotation_matrix[2, 2]
+        ) * 2.0
+        quaternion[3] = (
+            rotation_matrix[0, 2] - rotation_matrix[2, 0]
+        ) / scale
+        quaternion[0] = (
+            rotation_matrix[0, 1] + rotation_matrix[1, 0]
+        ) / scale
+        quaternion[1] = 0.25 * scale
+        quaternion[2] = (
+            rotation_matrix[1, 2] + rotation_matrix[2, 1]
+        ) / scale
+    else:
+        scale = np.sqrt(
+            1.0
+            + rotation_matrix[2, 2]
+            - rotation_matrix[0, 0]
+            - rotation_matrix[1, 1]
+        ) * 2.0
+        quaternion[3] = (
+            rotation_matrix[1, 0] - rotation_matrix[0, 1]
+        ) / scale
+        quaternion[0] = (
+            rotation_matrix[0, 2] + rotation_matrix[2, 0]
+        ) / scale
+        quaternion[1] = (
+            rotation_matrix[1, 2] + rotation_matrix[2, 1]
+        ) / scale
+        quaternion[2] = 0.25 * scale
+
+    norm = np.linalg.norm(quaternion)
+    if norm == 0.0:
+        raise ValueError("Rotation matrix produced a zero-length quaternion")
+    return quaternion / norm
 
 
 def depth_to_pointcloud_centroid(depth_image: np.array, intrinsic_matrix: np.array,

@@ -1,12 +1,17 @@
 # ROS2 imports
-from launch.substitutions import PathJoinSubstitution, LaunchConfiguration, TextSubstitution
+from launch.substitutions import (
+    PathJoinSubstitution,
+    LaunchConfiguration,
+    PythonExpression,
+)
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch import LaunchDescription
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch.actions import DeclareLaunchArgument
 from launch_ros.substitutions import FindPackageShare
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 
 import os
 from ament_index_python.packages import get_package_share_directory
@@ -58,16 +63,67 @@ def generate_launch_description():
         description='Name of the depth image topic to subscribe to',
     )
 
+    camera_calibration_mode_arg = DeclareLaunchArgument(
+        name='camera_calibration_mode',
+        default_value=config['camera_calibration_mode'],
+        description='Camera calibration source: auto, topic, or file',
+        choices=['auto', 'topic', 'file'],
+    )
+
     camera_info_topic_arg = DeclareLaunchArgument(
         name='camera_info_topic',
         default_value=config['camera_info_topic'],
         description='Name of the camera info topic to subscribe to',
     )
 
+    camera_info_timeout_sec_arg = DeclareLaunchArgument(
+        name='camera_info_timeout_sec',
+        default_value=str(config['camera_info_timeout_sec']),
+        description='Seconds auto mode waits before loading the local file',
+    )
+
+    camera_calibration_file_arg = DeclareLaunchArgument(
+        name='camera_calibration_file',
+        default_value=config['camera_calibration_file'],
+        description='Path to the local VITA camera calibration YAML',
+    )
+
+    camera_calibration_label_arg = DeclareLaunchArgument(
+        name='camera_calibration_label',
+        default_value=config['camera_calibration_label'],
+        description='Camera label selected from the local calibration YAML',
+    )
+
     camera_frame_arg = DeclareLaunchArgument(
         name='camera_frame',
         default_value=config['camera_frame'],
         description='Name of the camera frame where the estimated pose will be',
+    )
+
+    resize_width_arg = DeclareLaunchArgument(
+        name='resize_width',
+        default_value=str(config['resize_width']),
+        description='Width used for marker detection and pose estimation',
+    )
+
+    resize_height_arg = DeclareLaunchArgument(
+        name='resize_height',
+        default_value=str(config['resize_height']),
+        description='Height used for marker detection and pose estimation',
+    )
+
+    launch_camera_driver_arg = DeclareLaunchArgument(
+        name='launch_camera_driver',
+        default_value=str(config['launch_camera_driver']),
+        description='Launch a local RealSense driver',
+        choices=['true', 'false', 'True', 'False'],
+    )
+
+    launch_rviz_arg = DeclareLaunchArgument(
+        name='launch_rviz',
+        default_value=str(config['launch_rviz']),
+        description='Launch RViz for visualization',
+        choices=['true', 'false', 'True', 'False'],
     )
 
     detected_markers_topic_arg = DeclareLaunchArgument(
@@ -97,8 +153,20 @@ def generate_launch_description():
             "image_topic": LaunchConfiguration('image_topic'),
             "use_depth_input": LaunchConfiguration('use_depth_input'),
             "depth_image_topic": LaunchConfiguration('depth_image_topic'),
+            "camera_calibration_mode": LaunchConfiguration('camera_calibration_mode'),
             "camera_info_topic": LaunchConfiguration('camera_info_topic'),
+            "camera_info_timeout_sec": ParameterValue(
+                LaunchConfiguration('camera_info_timeout_sec'), value_type=float
+            ),
+            "camera_calibration_file": LaunchConfiguration('camera_calibration_file'),
+            "camera_calibration_label": LaunchConfiguration('camera_calibration_label'),
             "camera_frame": LaunchConfiguration('camera_frame'),
+            "resize_width": ParameterValue(
+                LaunchConfiguration('resize_width'), value_type=int
+            ),
+            "resize_height": ParameterValue(
+                LaunchConfiguration('resize_height'), value_type=int
+            ),
             "detected_markers_topic": LaunchConfiguration('detected_markers_topic'),
             "markers_visualization_topic": LaunchConfiguration('markers_visualization_topic'),
             "output_image_topic": LaunchConfiguration('output_image_topic'),
@@ -122,7 +190,11 @@ def generate_launch_description():
             "enable_color": "true",
             "enable_depth": "true",
         }.items(),
-        condition=IfCondition(LaunchConfiguration('use_depth_input'))
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('launch_camera_driver'),
+            "'.lower() == 'true' and '", LaunchConfiguration('use_depth_input'),
+            "'.lower() == 'true'",
+        ]))
     )
 
     camera_feed_node = IncludeLaunchDescription(
@@ -131,7 +203,11 @@ def generate_launch_description():
             "pointcloud.enable": "true",
             "enable_color": "true",
         }.items(),
-        condition=UnlessCondition(LaunchConfiguration('use_depth_input'))
+        condition=IfCondition(PythonExpression([
+            "'", LaunchConfiguration('launch_camera_driver'),
+            "'.lower() == 'true' and '", LaunchConfiguration('use_depth_input'),
+            "'.lower() != 'true'",
+        ]))
     )
 
     rviz_file = PathJoinSubstitution([
@@ -143,7 +219,8 @@ def generate_launch_description():
     rviz2_node = Node(
         package='rviz2',
         executable='rviz2',
-        arguments=['-d', rviz_file]
+        arguments=['-d', rviz_file],
+        condition=IfCondition(LaunchConfiguration('launch_rviz')),
     )
 
     return LaunchDescription([
@@ -153,8 +230,16 @@ def generate_launch_description():
         image_topic_arg,
         use_depth_input_arg,
         depth_image_topic_arg,
+        camera_calibration_mode_arg,
         camera_info_topic_arg,
+        camera_info_timeout_sec_arg,
+        camera_calibration_file_arg,
+        camera_calibration_label_arg,
         camera_frame_arg,
+        resize_width_arg,
+        resize_height_arg,
+        launch_camera_driver_arg,
+        launch_rviz_arg,
         detected_markers_topic_arg,
         markers_visualization_topic_arg,
         output_image_topic_arg,
